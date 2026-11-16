@@ -106,12 +106,18 @@ def run_model(model, clips):
 
 
 # ---------------------------------------------------------------- main
+def split_name(args):
+    """e.g. 'validation', or 'train-50000' for a random subset."""
+    return f"{args.split}-{args.max_videos}" if args.max_videos else args.split
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--split", default="validation")
     p.add_argument("--shard", type=int, default=0)
     p.add_argument("--num-shards", type=int, default=1)
     p.add_argument("--limit", type=int, default=None, help="only the first N videos of the shard (smoke test)")
+    p.add_argument("--max-videos", type=int, default=None, help="fixed random subset (seed 0) of the split, before sharding")
     p.add_argument("--batch-size", type=int, default=64, help="windows per forward pass")
     p.add_argument("--num-workers", type=int, default=7)
     p.add_argument("--frame-step", type=int, default=config.FRAME_STEP)
@@ -122,13 +128,17 @@ def main():
 
     config.FEATURES_DIR.mkdir(parents=True, exist_ok=True)
     out = Path(args.out) if args.out else config.FEATURES_DIR / (
-        f"features_{config.MODEL_TAG}_{args.split}_fs{args.frame_step}_shard{args.shard}of{args.num_shards}.h5"
+        f"features_{config.MODEL_TAG}_{split_name(args)}_fs{args.frame_step}_shard{args.shard}of{args.num_shards}.h5"
     )
     if out.exists():
         print(f"{out} exists, skipping.")
         return
 
-    videos = load_split(args.split)[args.shard :: args.num_shards][: args.limit]
+    videos = load_split(args.split)
+    if args.max_videos:
+        keep = np.sort(np.random.default_rng(0).permutation(len(videos))[: args.max_videos])
+        videos = [videos[i] for i in keep]
+    videos = videos[args.shard :: args.num_shards][: args.limit]
     print(f"{len(videos)} videos -> {out}", flush=True)
 
     device = torch.device(args.device)

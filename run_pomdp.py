@@ -35,13 +35,19 @@ plt.rcParams.update({
 })
 
 
-def load_features(pattern):
+def load_features(pattern, obs="meta"):
+    """obs="meta": Meta's pretrained SSv2 probe (logits stored in the features file).
+    obs="linear": our linear probe from train_probe.py (logits in the matching probe-linear_ file)."""
     files = sorted(glob.glob(pattern))
     assert files, f"no feature files match {pattern}"
     logq, y, full_correct, T_list = [], [], [], []
     for fn in files:
         with h5py.File(fn) as f:
             logits, vi, t = f["logits"][:], f["video_idx"][:], f["t"][:]
+        if obs == "linear":
+            with h5py.File(fn.replace("/features_", "/probe-linear_")) as g:
+                logits = g["logits"][:]
+        with h5py.File(fn) as f:
             labels, nfr, full = f["label"][:], f["n_frames"][:], f["full_logits"][:]
         lq = logits - pomdp.logsumexp(logits)  # log-softmax
         order = np.lexsort((t, vi))
@@ -75,18 +81,20 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--split", default="validation")
     p.add_argument("--frame-step", type=int, default=config.FRAME_STEP)
+    p.add_argument("--obs", choices=["meta", "linear"], default="linear",
+                   help="observation model: our linear probe (default) or Meta's pretrained SSv2 probe")
     p.add_argument("--costs", default="0.0,0.002,0.005,0.01,0.02,0.05,0.1")
     p.add_argument("--lookahead-samples", type=int, default=64)
     args = p.parse_args()
 
     name = f"{config.MODEL_TAG}_{args.split}_fs{args.frame_step}"
-    out = config.RESULTS_DIR / name
+    out = config.RESULTS_DIR / f"{name}_{args.obs}"
     out.mkdir(parents=True, exist_ok=True)
-    logq, y, full_correct = load_features(str(config.FEATURES_DIR / f"features_{name}_shard*.h5"))
+    logq, y, full_correct = load_features(str(config.FEATURES_DIR / f"features_{name}_shard*.h5"), args.obs)
 
     T = np.array([len(q) for q in logq])
     print(f"windows per video: mean {T.mean():.1f}, median {np.median(T):.0f}, min {T.min()}, max {T.max()}")
-    print(f"sanity: full-clip probe acc {full_correct.mean():.3f} | per-window acc "
+    print(f"sanity: full-clip Meta-probe acc {full_correct.mean():.3f} | per-window acc ({args.obs} probe) "
           f"{np.mean(np.concatenate([q.argmax(1) == yy for q, yy in zip(logq, y)])):.3f}")
 
     fit_idx, test_idx = stratified_split(y)
@@ -114,11 +122,12 @@ def main():
     fig, ax = plt.subplots(figsize=(5.5, 3.6))
     for label, (a, c) in curves.items():
         ax.plot(ts, a, color=c, marker="o", label=label)
-    ax.axhline(full_correct[test_idx].mean(), color=INK2, ls="--", lw=1)
-    ax.annotate("full-clip probe", (ts[-1], full_correct[test_idx].mean()), textcoords="offset points",
-                xytext=(0, 4), ha="right", color=INK2, fontsize=9)
+    if args.obs == "meta":  # full-clip reference only exists for Meta's probe
+        ax.axhline(full_correct[test_idx].mean(), color=INK2, ls="--", lw=1)
+        ax.annotate("full-clip probe", (ts[-1], full_correct[test_idx].mean()), textcoords="offset points",
+                    xytext=(0, 4), ha="right", color=INK2, fontsize=9)
     ax.set(xlabel="windows observed", ylabel="top-1 accuracy (agent-test)", title="Accuracy vs. evidence")
-    ax.legend(loc="upper left")
+    ax.legend(loc="best")
     fig.tight_layout(); fig.savefig(out / "fig1_acc_vs_windows.png", dpi=200); plt.close(fig)
 
     # ---- Figure 2: accuracy / evidence trade-off (Pareto), no cost needed
