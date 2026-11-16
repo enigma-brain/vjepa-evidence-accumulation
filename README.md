@@ -20,6 +20,7 @@ The observation model is a frozen V-JEPA 2 encoder plus **our own linear probe**
 | `train_probe.py` | trains the linear probe on SSv2-train window embeddings, then writes its logits for every validation window |
 | `pomdp.py` | belief update (tempered naive Bayes), rollout loop, agents (FixedBudget, Threshold, Lookahead, FittedQ) |
 | `run_pomdp.py` | fits agents on half of SSv2-val and evaluates them on the other half; writes the table + figures |
+| `train_e2e.py` | end-to-end: linear probe + α + a learned stopping rule, trained together on the exact expected reward (no RL sampling needed) |
 | `test_pomdp.py` | tests on a synthetic POMDP whose exact posterior is known |
 
 **Adding an agent:** write a class with `act(belief, t, T) -> bool` (True = stop). Optionally give it `fit(Bs, logq, y, cost)`. Then add it to the `agents` dict in `run_pomdp.py`.
@@ -41,6 +42,7 @@ SPLIT=train MAX_VIDEOS=50000 sbatch extract.sbatch   # 3b. features for a 50k-vi
 python train_probe.py                      # 4. our linear probe (train-50000 -> validation logits)
 python run_pomdp.py                        # 5. agents -> $EVACC_ROOT/results/<model>_<split>_fs<step>_linear/
 python run_pomdp.py --obs meta             #    same, using Meta's pretrained probe (reference)
+python train_e2e.py                        # 6. end-to-end variants (CPU, ~1h) -> e2e_summary.csv, fig4_e2e.png
 pytest test_pomdp.py
 ```
 
@@ -48,4 +50,5 @@ pytest test_pomdp.py
 - **Windows.** Window t is K=16 frames taken every `FRAME_STEP`=2 raw frames, starting at raw frame 4t. A window runs about 2.7 s, and windows start every 0.33 s (SSv2 is 12 fps). The probe was trained on 16 frames at step 4 that span the whole clip, so single windows are deliberately partial evidence. Each video also gets one "full clip" forward pass, which serves as a sanity check against published probe accuracy.
 - **Splits.** Probes are trained on SSv2 *train* (ours on a fixed random 50k-video subset). All agent fitting and testing uses SSv2 *validation*, split 50/50 by class (agent-fit / agent-test).
 - **Belief.** log b_t = log p(y) + α Σ_τ [log q_τ(y) − log p(y)]. α < 1 discounts correlated windows (it is the naive-Bayes independence correction). α is fit on agent-fit.
+- **End-to-end.** Stopping never changes what the agent sees, so P(stop at t) = h_t ∏_{s<t}(1 − h_s) makes the expected reward an exact, differentiable sum. The reward uses a sharpened soft-argmax of b_t (k=10), because b_t(y) itself keeps rising with more windows and pays the agent to over-watch. Three variants: `frozen` (train-split probe fixed), `ce` (probe learns only by cross-entropy), `full` (probe also learns from the reward). Comparing `full` with `ce` isolates the effect of end-to-end training on the probe.
 - **Lookahead.** This is the one-step tree in Fig. 1. The expectation over o_{t+1} samples y ~ b_t, then the window t+1 of a random agent-fit video of class y.
