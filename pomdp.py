@@ -96,7 +96,7 @@ class Threshold:
     def act(self, b, t, T):
         return b.max() >= self.theta
 
-    def fit(self, Bs, logq, y, cost, grid=np.linspace(0.05, 1.0, 39)):
+    def fit(self, Bs, logq, y, cost, grid=np.linspace(0.0, 1.0, 41)):  # theta=0: always stop at once
         self.theta = float(max(grid, key=lambda th: evaluate(Threshold(th), Bs, y, cost)["reward"]))
         return self
 

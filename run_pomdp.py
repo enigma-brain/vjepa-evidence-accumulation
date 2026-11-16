@@ -40,15 +40,16 @@ def load_features(pattern, obs="meta"):
     obs="linear": our linear probe from train_probe.py (logits in the matching probe-linear_ file)."""
     files = sorted(glob.glob(pattern))
     assert files, f"no feature files match {pattern}"
-    logq, y, full_correct, T_list = [], [], [], []
+    logq, y, full_correct, ids = [], [], [], []
     for fn in files:
         with h5py.File(fn) as f:
-            logits, vi, t = f["logits"][:], f["video_idx"][:], f["t"][:]
+            vi, t, labels, nfr, vid = f["video_idx"][:], f["t"][:], f["label"][:], f["n_frames"][:], f["video_id"][:]
+            logits = f["logits"][:] if obs == "meta" else None
+            # full-clip Meta-probe logits exist only for V-JEPA features (not e.g. the pixel control)
+            full = f["full_logits"][:] if "full_logits" in f else np.full((len(labels), 1), np.nan)
         if obs == "linear":
             with h5py.File(fn.replace("/features_", "/probe-linear_")) as g:
                 logits = g["logits"][:]
-        with h5py.File(fn) as f:
-            labels, nfr, full = f["label"][:], f["n_frames"][:], f["full_logits"][:]
         lq = logits - pomdp.logsumexp(logits)  # log-softmax
         order = np.lexsort((t, vi))
         lq, vi = lq[order], vi[order]
@@ -58,9 +59,10 @@ def load_features(pattern, obs="meta"):
                 continue
             logq.append(lq[bounds[v] : bounds[v + 1]])
             y.append(labels[v])
-            full_correct.append(full[v].argmax() == labels[v])
+            full_correct.append(full[v].argmax() == labels[v] if np.isfinite(full[v]).all() else np.nan)
+            ids.append(vid[v])
     print(f"loaded {len(files)} shards, {len(y)} videos, {sum(len(q) for q in logq)} windows")
-    return logq, np.array(y), np.array(full_correct)
+    return logq, np.array(y), np.array(full_correct), np.array(ids)
 
 
 def stratified_split(y, seed=0):
@@ -90,7 +92,7 @@ def main():
     name = f"{config.MODEL_TAG}_{args.split}_fs{args.frame_step}"
     out = config.RESULTS_DIR / f"{name}_{args.obs}"
     out.mkdir(parents=True, exist_ok=True)
-    logq, y, full_correct = load_features(str(config.FEATURES_DIR / f"features_{name}_shard*.h5"), args.obs)
+    logq, y, full_correct, _ = load_features(str(config.FEATURES_DIR / f"features_{name}_shard*.h5"), args.obs)
 
     T = np.array([len(q) for q in logq])
     print(f"windows per video: mean {T.mean():.1f}, median {np.median(T):.0f}, min {T.min()}, max {T.max()}")

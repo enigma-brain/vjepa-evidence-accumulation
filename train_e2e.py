@@ -201,12 +201,15 @@ def main():
     p.add_argument("--lam", type=float, default=0.1, help="weight of the per-window cross-entropy term")
     p.add_argument("--epochs", type=int, default=30)
     p.add_argument("--sharpness", type=float, default=10.0, help="k in the soft-argmax reward")
+    p.add_argument("--plot-only", action="store_true", help="redraw fig4 from e2e_summary.csv + summary.csv")
     args = p.parse_args()
     torch.set_num_threads(min(16, torch.get_num_threads()))
 
     name = f"{config.MODEL_TAG}_validation_fs{args.frame_step}"
     out = config.RESULTS_DIR / f"{name}_linear"
     out.mkdir(parents=True, exist_ok=True)
+    if args.plot_only:
+        return plot(out)
     ckpt = torch.load(args.probe or config.FEATURES_DIR / f"probe-linear_{config.MODEL_TAG}_train-50000_fs{args.frame_step}.pt",
                       weights_only=False)
 
@@ -233,12 +236,14 @@ def main():
             rows.append(dict(cost=cost, agent=f"E2E-{variant}", alpha=model.alpha.item(), epoch=ep, probe_acc=win_acc, **r))
             print(f"c={cost:<6} E2E-{variant:<7} alpha={model.alpha.item():.3f} epoch={ep:2d} probe={win_acc:.3f}  "
                   f"acc={r['acc']:.3f} steps={r['steps']:.2f} reward={r['reward']:.3f}", flush=True)
-    df = pd.DataFrame(rows)
-    df.to_csv(out / "e2e_summary.csv", index=False)
+    pd.DataFrame(rows).to_csv(out / "e2e_summary.csv", index=False)
+    plot(out)
 
+
+def plot(out):
     # ---- Figure 4: reward / windows vs cost, end-to-end vs the best Bayes agent (Threshold, run_pomdp.py)
     ref = pd.read_csv(out / "summary.csv")
-    both = pd.concat([ref[ref.agent == "Threshold"], df])
+    both = pd.concat([ref[ref.agent == "Threshold"], pd.read_csv(out / "e2e_summary.csv")])
     colors = {"Threshold": COLORS["Threshold"], "E2E-frozen": "#e87ba4", "E2E-ce": "#008300", "E2E-full": "#6250d6"}  # slots 1,5,6,7
     fig, axes = plt.subplots(1, 2, figsize=(9, 3.6))
     for agent_name, g in both.groupby("agent", sort=False):

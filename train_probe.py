@@ -37,6 +37,7 @@ def load(pattern, key="emb_mean"):
 
 def main():
     p = argparse.ArgumentParser()
+    p.add_argument("--tag", default=config.MODEL_TAG, help="features to read, e.g. pixels8 for the pixel control")
     p.add_argument("--train-split", default="train-50000")
     p.add_argument("--eval-split", default="validation")
     p.add_argument("--frame-step", type=int, default=config.FRAME_STEP)
@@ -47,7 +48,7 @@ def main():
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     torch.manual_seed(0)
-    tag = f"{config.MODEL_TAG}_{args.train_split}_fs{args.frame_step}"
+    tag = f"{args.tag}_{args.train_split}_fs{args.frame_step}"
     X, y, vid = load(str(config.FEATURES_DIR / f"features_{tag}_shard*.h5"))
     print(f"train windows: {len(y)} from {len(np.unique(vid))} videos")
 
@@ -89,7 +90,7 @@ def main():
 
     # apply to every evaluation shard, keeping row order identical to the features file
     accs = []
-    for fn in sorted(glob.glob(str(config.FEATURES_DIR / f"features_{config.MODEL_TAG}_{args.eval_split}_fs{args.frame_step}_shard*.h5"))):
+    for fn in sorted(glob.glob(str(config.FEATURES_DIR / f"features_{args.tag}_{args.eval_split}_fs{args.frame_step}_shard*.h5"))):
         with h5py.File(fn) as f:
             E = f["emb_mean"][:].astype(np.float32)
             labels = f["label"][:][f["video_idx"][:]]
