@@ -1,0 +1,58 @@
+# CPU-only steps on extracted features: tests, linear probe, POMDP agents, direction check (SSv2),
+# probe analysis (evidence by position, calibration, Diving48 dive attributes), belief-model comparison (beliefs).
+# Reads ~/persist/aa228/features, writes ~/persist/aa228/results/<model>_<eval split>_fs2_{linear,meta,direction}/.
+#   sky jobs launch -d -n liubr-vitl-analysis sky/analysis.yaml
+#   sky jobs launch -d -n liubr-vitg-analysis sky/analysis.yaml --env MODEL_TAG=vitg16_384_ssv2 --env META=0
+#   sky jobs launch -d -n liubr-vitl-direction sky/analysis.yaml --env STEPS=direction   # one step only
+#   sky jobs launch -d -n liubr-d48-analysis sky/analysis.yaml --env DATASET=diving48 \
+#       --env MODEL_TAG=vitl16_diving48 --env STEPS="test probe pomdp analyze"     # direction pairs are SSv2-only
+name: liubr-analysis
+workdir: .
+
+volumes:
+  /home/sky/persist: at-liubr-workspace
+
+resources:
+  infra: k8s/at-cluster
+  cpus: 8
+  memory: 32
+
+envs:
+  DATASET: ssv2
+  MODEL_TAG: vitl16_ssv2
+  META: 1                      # also run agents on Meta's SSv2 probe (needs a checkpoint with the SSv2 head)
+  STEPS: test probe pomdp direction
+  PROBE_KEYS: emb_mean         # linear probes to train, e.g. "emb_mean emb_ml emb_mean+emb_std"; obs linear[-<key>]
+  PROBE_ARGS: ""               # extra train_probe.py args, e.g. "--train-shards shard0of3 --suffix=-third"
+  OBS_SUFFIX: ""               # = the --suffix above, so the agents read those probes
+  LABEL: baseline              # export / represent: ROOT/comparison/<LABEL>/<dataset>/<window>/
+  PAIR: ""                     # paired / cka: two export labels, reference first, e.g. "baseline neural"
+  PAIR_TAGS: ""                # cka: their two features tags, same order, e.g. "vitl16_diving48 vitg16_256"
+
+setup: bash sky/common_setup.sh
+
+run: |
+  set -euo pipefail
+  export EVACC_ROOT=$PERSIST_DIR/aa228 EVACC_MODEL_TAG=$MODEL_TAG EVACC_DATASET=$DATASET OMP_NUM_THREADS=8
+  source ~/evacc-venv/bin/activate
+  OBS=""; for k in $PROBE_KEYS; do [ "$k" = emb_mean ] && OBS="$OBS linear$OBS_SUFFIX" || OBS="$OBS linear-$k$OBS_SUFFIX"; done
+  [ "$META" = 1 ] && OBS="$OBS meta"
+  for step in $STEPS; do
+    echo "===== $step"
+    case $step in
+      test)      pytest -q test_pomdp.py test_windows.py ;;
+      probe)     for k in $PROBE_KEYS; do python train_probe.py --key $k $PROBE_ARGS; done ;;
+      pomdp)     for o in $OBS; do python run_pomdp.py --obs $o; done ;;
+      direction) python direction_check.py --obs $OBS ;;
+      analyze)   python probe_analysis.py --obs $OBS ;;
+      beliefs)   python belief_models.py --obs $OBS ;;
+      export)    python export_comparison.py --label $LABEL --obs $OBS
+                 mkdir -p $EVACC_ROOT/comparison/$LABEL/$DATASET   # code snapshot (provenance without a commit)
+                 tar czf $EVACC_ROOT/comparison/$LABEL/$DATASET/code-$(date +%Y%m%d-%H%M%S).tgz *.py sky ;;
+      represent) python representation_analysis.py --labels $LABEL ;;
+      paired)    python paired_comparison.py $PAIR ;;
+      cka)       python representation_analysis.py --tags $PAIR_TAGS --labels $PAIR ;;
+      weights)   python check_encoder_weights.py facebook/vjepa2-vitl-fpc64-256 facebook/vjepa2-vitl-fpc16-256-ssv2 facebook/vjepa2-vitl-fpc32-256-diving48 ;;
+      *)         echo "unknown step $step"; exit 1 ;;
+    esac
+  done

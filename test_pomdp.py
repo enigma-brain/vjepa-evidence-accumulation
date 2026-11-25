@@ -73,6 +73,25 @@ def test_adaptive_agents_beat_fixed_budget():
     thresh = pomdp.evaluate(pomdp.Threshold().fit(B_fit, logq_fit, y_fit, cost), Bs, y, cost)
     look = pomdp.evaluate(pomdp.Lookahead(lp, 1.0).fit(B_fit, logq_fit, y_fit, cost), Bs, y, cost)
     fq = pomdp.evaluate(pomdp.FittedQ().fit(B_fit, logq_fit, y_fit, cost), Bs, y, cost)
+    lsm = pomdp.evaluate(pomdp.LSM().fit(B_fit, logq_fit, y_fit, cost), Bs, y, cost)
+    assert lsm["reward"] > fixed["reward"] - 0.01
     assert fq["reward"] > fixed["reward"] - 0.01
     assert thresh["reward"] > fixed["reward"]
     assert look["reward"] > fixed["reward"] - 0.01  # myopic, but should be competitive
+
+
+def test_lsm_exact_on_known_values():
+    """Two-step toy: window 0 is uninformative for half the videos; LSM must learn to continue exactly there."""
+    cost = 0.1
+    Bs, y = [], []
+    for i in range(400):
+        easy = i % 2 == 0
+        b0 = np.array([0.9, 0.05, 0.05]) if easy else np.array([0.34, 0.33, 0.33])
+        Bs.append(np.stack([b0, np.array([0.98, 0.01, 0.01])]))
+        y.append(0 if easy else [0, 1, 2][i % 3])
+    y = np.array(y)
+    for B, yy in zip(Bs, y):  # second window always reveals the class
+        B[1] = np.eye(3)[yy] * 0.98 + 0.01
+    agent = pomdp.LSM(min_n=10).fit(Bs, None, y, cost)
+    steps = np.array([pomdp.rollout(agent, B, yy, cost)[1] for B, yy in zip(Bs, y)])
+    assert (steps[::2] == 1).all() and (steps[1::2] == 2).all()

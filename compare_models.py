@@ -37,9 +37,9 @@ PALETTE = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6
 THETAS = (0.5, 0.7, 0.9)
 
 
-def load_model(spec, frame_step):
+def load_model(spec, window):
     tag, obs = spec.split(":")
-    logq, y, _, ids = load_features(str(config.FEATURES_DIR / f"features_{tag}_validation_fs{frame_step}_shard*.h5"), obs)
+    logq, y, _, ids = load_features(str(config.FEATURES_DIR / f"features_{tag}_{config.EVAL_SPLIT}_{window}_shard*.h5"), obs)
     return dict(zip(ids.tolist(), zip(logq, y)))
 
 
@@ -93,12 +93,12 @@ def paired_ci(d, n_boot=2000, seed=0):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("models", nargs="+", help="<features tag>:<linear|meta>; the first one is the reference")
-    p.add_argument("--frame-step", type=int, default=config.FRAME_STEP)
+    p.add_argument("--window", default=config.WINDOW, help="window tag in file names (default: the current protocol)")
     p.add_argument("--costs", default="0.0,0.002,0.005,0.01,0.02,0.05,0.1")
     args = p.parse_args()
     costs = [float(c) for c in args.costs.split(",")]
 
-    data = [load_model(m, args.frame_step) for m in args.models]
+    data = [load_model(m, args.window) for m in args.models]
     ids = [i for i in data[0] if all(i in d for d in data[1:])]  # videos every model has, in a fixed order
     y = np.array([data[0][i][1] for i in ids])
     for d in data[1:]:

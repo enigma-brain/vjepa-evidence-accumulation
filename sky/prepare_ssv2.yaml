@@ -1,0 +1,28 @@
+# One-time, CPU only: download SSv2 (~19 GB) into ~/persist on at, as the 20 archive parts.
+# The parts are NOT unpacked here: 220k small files crawl on CephFS, so each extract job
+# streams the parts (fast, sequential) and unpacks them onto its own local disk instead.
+#   sky jobs launch -d -n liubr-ssv2-download sky/prepare_ssv2.yaml
+name: liubr-ssv2-download
+workdir: .
+
+volumes:
+  /home/sky/persist: at-liubr-workspace
+
+resources:
+  infra: k8s/at-cluster
+  cpus: 4
+  memory: 16
+
+setup: bash sky/common_setup.sh
+
+run: |
+  set -euo pipefail
+  DST=$PERSIST_DIR/aa228/data/ssv2
+  if [ -f "$DST/validation.json" ] && [ "$(ls "$DST"/raw/videos/20bn-something-something-v2-?? 2>/dev/null | wc -l)" = 20 ]; then
+    echo "SSv2 already in $DST, skipping."; exit 0
+  fi
+  mkdir -p "$DST/raw"
+  export HF_HOME=$HOME/.cache/huggingface    # keep the HF small-file cache off CephFS
+  ~/evacc-venv/bin/hf download morpheushoc/something-something-v2 --repo-type dataset --local-dir "$DST/raw"
+  cp "$DST/raw"/{labels.json,train.json,validation.json,test.json} "$DST/"
+  ls -la "$DST" "$DST/raw/videos"; du -sh "$DST"

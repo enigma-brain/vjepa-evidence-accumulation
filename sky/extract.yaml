@@ -1,0 +1,83 @@
+# V-JEPA feature extraction on at, as a managed job. Outputs go to the at workspace:
+#   ~/persist/aa228/features/features_<MODEL_TAG>_<split>_fs<step>_shard<i>of<n>.h5
+#   sky jobs launch -d -n liubr-vitl-val   sky/extract.yaml                     # ViT-L, validation
+#   sky jobs launch -d -n liubr-vitl-train sky/extract.yaml --env SPLIT=train --env MAX_VIDEOS=50000
+#   sky jobs launch -d -n liubr-vitg-val   sky/extract.yaml \
+#       --env MODEL_ID=facebook/vjepa2-vitg-fpc64-384-ssv2 --env MODEL_TAG=vitg16_384_ssv2 --env BATCH_SIZE=16
+#   sky jobs launch -d -n liubr-d48-test  sky/extract.yaml --env DATASET=diving48 --env SPLIT=test \
+#       --env MODEL_ID=facebook/vjepa2-vitl-fpc32-256-diving48 --env MODEL_TAG=vitl16_diving48
+#   (same with --env SPLIT=train for the linear-probe training features)
+# MODEL_TAG names the feature files: keep it unique per dataset (e.g. vith16_diving48, not vith16).
+# Any HF V-JEPA 2 checkpoint works, e.g. the encoder-only facebook/vjepa2-vith-fpc64-256 (emb_mean only).
+# ViT-g at 384 px has ~4.5x the tokens of ViT-L at 256: start with a smaller BATCH_SIZE under the VRAM cap.
+# Split one run over several GPUs (finished shards are skipped on rerun):
+#   for i in 0 1 2 3; do sky jobs launch -y -d -n liubr-vitl-val-$i sky/extract.yaml --env SHARD=$i --env NUM_SHARDS=4; done
+name: liubr-vjepa-extract
+workdir: .
+
+volumes:
+  /home/sky/persist: at-liubr-workspace
+
+resources:
+  infra: k8s/at-cluster
+  cpus: 8
+  memory: 48
+  ephemeral_storage: 60        # GB: unpacked SSv2 videos (~19 GB) + venv + caches
+  ordered:                     # first one with a free GPU wins
+    - accelerators: RTXPRO-6000-BLACKWELL-SERVER-EDITION:1   # 96 GB, HAMi-shared
+    - accelerators: L40S:1                                    # 46 GB, HAMi-shared (tm-gpu0)
+    - accelerators: RTX3090:1                                 # 24 GB, whole card
+
+config:
+  kubernetes:
+    pod_config:
+      spec:
+        containers:
+          - resources:
+              limits:
+                # VRAM cap on the shared cards (a no-op on the RTX3090). If a bigger model
+                # OOMs, lower BATCH_SIZE before raising this.
+                nvidia.com/gpumem: 22528    # MiB
+
+envs:
+  DATASET: ssv2                # ssv2 | diving48 (see config.DATASETS)
+  MODEL_ID: facebook/vjepa2-vitl-fpc16-256-ssv2
+  MODEL_TAG: vitl16_ssv2
+  SPLIT: validation
+  MAX_VIDEOS: ""
+  SHARD: 0
+  NUM_SHARDS: 1
+  BATCH_SIZE: 64
+  OVERWRITE: 0                 # 1: recompute an existing shard file
+  NUM_WORKERS: 7               # = cpus - 1; nproc in the pod reports the whole node
+
+setup: bash sky/common_setup.sh
+
+run: |
+  set -euo pipefail
+  export EVACC_ROOT=$PERSIST_DIR/aa228 EVACC_DATASET=$DATASET
+  export EVACC_MODEL_ID=$MODEL_ID EVACC_MODEL_TAG=$MODEL_TAG
+  export OMP_NUM_THREADS=1
+  source ~/evacc-venv/bin/activate
+
+  # Unpack the videos onto local disk (streamed sequentially from ~/persist).
+  LOCAL=$HOME/videos-$DATASET RAW=$EVACC_ROOT/data/$DATASET/raw
+  if [ ! -f "$LOCAL/.done" ]; then
+    mkdir -p "$LOCAL"
+    case $DATASET in
+      ssv2)     time cat "$RAW"/videos/20bn-something-something-v2-?? | tar -xz -C "$LOCAL" ;;
+      diving48) time tar -xzf "$RAW/Diving48_rgb.tar.gz" -C "$LOCAL" ;;
+    esac
+    touch "$LOCAL/.done"
+  fi
+  EXT=$(python -c "import config; print(config.VIDEO_EXT)")
+  export EVACC_VIDEOS=$(dirname "$(find "$LOCAL" -name "*$EXT" -print -quit)")
+  echo "videos: $(ls "$EVACC_VIDEOS" | wc -l)"; nvidia-smi --query-gpu=name,memory.total --format=csv
+
+  mkdir -p "$EVACC_ROOT/logs"
+  nvidia-smi dmon -s um -d 10 > "$EVACC_ROOT/logs/dmon-${MODEL_TAG}-${SPLIT}-${SHARD}of${NUM_SHARDS}.log" &
+  DMON=$!
+  python extract_features.py --split $SPLIT --shard $SHARD --num-shards $NUM_SHARDS \
+      --num-workers $NUM_WORKERS --batch-size $BATCH_SIZE ${MAX_VIDEOS:+--max-videos $MAX_VIDEOS} \
+      $([ "$OVERWRITE" = 1 ] && echo --overwrite)
+  kill $DMON    # otherwise the background dmon keeps the job RUNNING forever

@@ -1,0 +1,30 @@
+# One-time, CPU only: download Diving48 (RGB, ~10 GB) + the V2 (cleaned) annotations into ~/persist on at.
+# Like SSv2, the tarball is NOT unpacked here (18k small files crawl on CephFS); extract jobs
+# stream it onto their own local disk.
+#   sky jobs launch -d -n liubr-diving48-download sky/prepare_diving48.yaml
+# Source: http://www.svcl.ucsd.edu/projects/resound/dataset.html (Nextcloud share links).
+name: liubr-diving48-download
+workdir: .
+
+volumes:
+  /home/sky/persist: at-liubr-workspace
+
+resources:
+  infra: k8s/at-cluster
+  cpus: 2
+  memory: 8
+
+run: |
+  set -euo pipefail
+  DST=$PERSIST_DIR/aa228/data/diving48
+  NC=https://nextcloud.nrp-nautilus.io/s
+  mkdir -p "$DST/raw"
+  get() {  # <share token> <dest>; resumable, skips finished files
+    if [ ! -s "$2" ]; then curl -fL --retry 5 -C - -o "$2.part" "$NC/$1/download"; mv "$2.part" "$2"; fi
+  }
+  get Z3CfTwcnTtp5d4p "$DST/train.json"     # Diving48_V2_train.json
+  get mfr5pfaSNp5Zx8X "$DST/test.json"      # Diving48_V2_test.json
+  get oWjtCkbw9G4qdSy "$DST/labels.json"    # Diving48_vocab.json (index = label, = HF id2label order)
+  get eqKMRFHqNCrP77L "$DST/raw/Diving48_rgb.tar.gz"
+  test "$(stat -c %s "$DST/raw/Diving48_rgb.tar.gz")" = 10287167940 || { echo "tarball size mismatch"; exit 1; }
+  ls -la "$DST" "$DST/raw"; du -sh "$DST"
