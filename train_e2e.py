@@ -195,7 +195,7 @@ def train_one(data, fit_vids, val_vids, probe_state, lp, cost, lam, variant, epo
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--frame-step", type=int, default=config.FRAME_STEP)
+    p.add_argument("--window", default=config.WINDOW, help="window tag in file names (default: the current protocol)")
     p.add_argument("--probe", default=None, help="default: probe-linear_<tag>_train-50000_fs<step>.pt")
     p.add_argument("--costs", default="0.0,0.002,0.005,0.01,0.02,0.05,0.1")
     p.add_argument("--lam", type=float, default=0.1, help="weight of the per-window cross-entropy term")
@@ -205,12 +205,12 @@ def main():
     args = p.parse_args()
     torch.set_num_threads(min(16, torch.get_num_threads()))
 
-    name = f"{config.MODEL_TAG}_validation_fs{args.frame_step}"
+    name = f"{config.MODEL_TAG}_{config.EVAL_SPLIT}_{args.window}"
     out = config.RESULTS_DIR / f"{name}_linear"
     out.mkdir(parents=True, exist_ok=True)
     if args.plot_only:
         return plot(out)
-    ckpt = torch.load(args.probe or config.FEATURES_DIR / f"probe-linear_{config.MODEL_TAG}_train-50000_fs{args.frame_step}.pt",
+    ckpt = torch.load(args.probe or config.FEATURES_DIR / f"probe-linear_{config.MODEL_TAG}_{config.TRAIN_SPLIT}_{args.window}.pt",
                       weights_only=False)
 
     X, y = load_embeddings(str(config.FEATURES_DIR / f"features_{name}_shard*.h5"))

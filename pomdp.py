@@ -64,8 +64,13 @@ def rollout(agent, B, y, cost):
     return correct, t + 1, correct - cost * t  # (correct, windows observed, reward)
 
 
+def rollouts(agent, Bs, y, cost):
+    """Per-video results [N, 3]: (correct, windows observed, reward)."""
+    return np.array([rollout(agent, B, yy, cost) for B, yy in zip(Bs, y)]).reshape(-1, 3)
+
+
 def evaluate(agent, Bs, y, cost):
-    r = np.array([rollout(agent, B, yy, cost) for B, yy in zip(Bs, y)])
+    r = rollouts(agent, Bs, y, cost)
     return dict(acc=r[:, 0].mean(), steps=r[:, 1].mean(), reward=r[:, 2].mean())
 
 
@@ -195,3 +200,55 @@ class FittedQ:
 
     def __repr__(self):
         return f"FittedQ(iters={self.iters})"
+
+
+class LSM:
+    """Longstaff-Schwartz least-squares Monte Carlo for optimal stopping (Longstaff & Schwartz 2001, RFS 14:113).
+
+    Stopping never changes what the agent would see next, so each fit video's belief trajectory gives the
+    realized reward of stopping at any step: r_t = 1[argmax b_t == y] - cost * t. Backward induction:
+      t = T-1: must stop; realized value V = r_{T-1}.
+      t < T-1: regress V (the reward this video actually gets under the rule already learned for steps > t)
+               on belief features phi(b_t, t)      -> continuation value C_t(phi)   (one ridge fit per t)
+               regress 1[argmax b_t == y] on phi   -> stopping value    S(phi) - cost * t (pooled over t)
+               rule at t: stop iff S - cost * t >= C_t; where it stops, V <- r_t (the REALIZED reward).
+    Unlike FittedQ, the regression target is a realized payoff, never max(estimate, estimate), so the value of
+    continuing is not biased upward by noise in the estimates (FittedQ's over-watching at higher cost).
+    Steps with fewer than min_n fit videos regress on an intercept only. Same features as FittedQ.
+    """
+
+    def __init__(self, ridge=1e-3, min_n=50):
+        self.ridge, self.min_n = ridge, min_n
+
+    def _ridge(self, X, r):
+        return np.linalg.solve(X.T @ X + self.ridge * np.eye(X.shape[1]), X.T @ r)
+
+    def fit(self, Bs, logq, y, cost):
+        phis = [FittedQ.features(B, np.arange(len(B)), len(B)) for B in Bs]
+        correct = [(B.argmax(1) == yy).astype(float) for B, yy in zip(Bs, y)]
+        T = np.array([len(B) for B in Bs])
+        self.w_stop = self._ridge(np.vstack(phis), np.concatenate(correct))
+        V = np.array([c[-1] - cost * (n - 1) for c, n in zip(correct, T)])  # forced stop at the last window
+        self.w_cont = {}
+        for t in range(T.max() - 2, -1, -1):
+            idx = np.flatnonzero(T > t + 1)  # videos that can still continue at step t
+            X = np.stack([phis[i][t] for i in idx])
+            if len(idx) >= self.min_n:
+                w = self._ridge(X, V[idx])
+            else:  # too few videos this long: constant continuation value
+                w = np.zeros(X.shape[1])
+                w[0] = V[idx].mean()
+            self.w_cont[t] = w
+            stop = X @ self.w_stop - cost * t >= X @ w
+            V[idx[stop]] = np.array([correct[i][t] for i in idx[stop]]) - cost * t
+        self.cost = cost
+        return self
+
+    def act(self, b, t, T):
+        if t not in self.w_cont:  # last window of the longest fit video, or beyond
+            return True
+        phi = FittedQ.features(b[None], [t], T)[0]
+        return float(phi @ self.w_stop) - self.cost * t >= float(phi @ self.w_cont[t])
+
+    def __repr__(self):
+        return f"LSM(min_n={self.min_n})"
