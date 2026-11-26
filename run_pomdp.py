@@ -4,7 +4,7 @@
 2. 2-fold cross-fitting: split videos 50/50 (stratified by class) into halves A and B; fit on A and
    score B, then fit on B and score A. Every video is scored once, by parameters it was not fitted on.
 3. Per fold: fit the class prior and the naive-Bayes temperature alpha on the fit half.
-4. For each step cost c: fit FixedBudget / Threshold / Lookahead / FittedQ / LSM per fold, score the other half.
+4. For each step cost c: fit FixedBudget / Threshold / Lookahead / FittedQ per fold, score the other half.
 5. Save summary.csv + figures under RESULTS_DIR/<run name>/. summary.csv has 95% bootstrap CIs over
    videos for the reward, and paired CIs for each agent's reward minus FixedBudget's on the same videos.
 
@@ -181,7 +181,6 @@ def main():
                 "Threshold": pomdp.Threshold(),
                 "Lookahead": pomdp.Lookahead(lp, a, m=args.lookahead_samples),
                 "FittedQ": pomdp.FittedQ(),
-                "LSM": pomdp.LSM(),
             }
             for agent_name, agent in agents.items():
                 agent.fit(B_fit[k], [logq[i] for i in fi], y[fi], cost)

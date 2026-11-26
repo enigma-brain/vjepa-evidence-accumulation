@@ -24,6 +24,7 @@ import config
 from run_pomdp import COLORS, bootstrap_ci, plt
 
 CURVE_COLORS = [COLORS["Threshold"], COLORS["Lookahead"]]  # A, B (fixed order)
+EXCLUDED_AGENTS = {"LSM"}  # older baseline exports still carry LSM rows; it is not part of the comparison
 
 
 def ci_row(metric, d, **kw):
@@ -103,6 +104,7 @@ def main():
                 params.append(dict(obs=obs, model=lab, **{k: v for k, v in f.items() if k != "step_temperatures"}))
         # A4
         A4a, A4b = pd.read_csv(da / "A4_agents.csv.gz"), pd.read_csv(db / "A4_agents.csv.gz")
+        A4a, A4b = (d[~d.agent.isin(EXCLUDED_AGENTS)] for d in (A4a, A4b))
         m4 = A4a.merge(A4b, on=["video_id", "cost", "agent"], suffixes=("_a", "_b"))
         for (cost, agent), g in m4.groupby(["cost", "agent"]):
             rows += [ci_row(f"A4 reward c={cost} {agent}", g.reward_b - g.reward_a, **kw),
