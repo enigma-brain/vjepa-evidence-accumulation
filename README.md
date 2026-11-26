@@ -18,7 +18,7 @@ The observation model is a frozen V-JEPA 2 encoder plus **our own linear probe**
 | `extract_features.py` | video → sliding windows → V-JEPA 2 + probe → `features_*.h5` (logits + embeddings per window) |
 | `extract.sbatch` | runs the extraction as a SLURM array of 1-GPU jobs |
 | `train_probe.py` | trains the linear probe on SSv2-train window embeddings, then writes its logits for every validation window |
-| `pomdp.py` | belief update (tempered naive Bayes), rollout loop, agents (FixedBudget, Threshold, Lookahead, FittedQ, LSM = Longstaff-Schwartz least-squares Monte Carlo) |
+| `pomdp.py` | belief update (tempered naive Bayes), rollout loop, agents (FixedBudget, Threshold, Lookahead, FittedQ; also LSM = Longstaff-Schwartz least-squares Monte Carlo, implemented and tested but excluded from runs: it stopped too early on both datasets, see HANDOFF.md) |
 | `run_pomdp.py` | fits agents on half of SSv2-val and evaluates them on the other half; writes the table + figures |
 | `train_e2e.py` | end-to-end: linear probe + α + a learned stopping rule, trained together on the exact expected reward (no RL sampling needed) |
 | `compare_models.py` | paired comparison of observation models on the same videos: calibrated confidence per window, time to reach confidence θ, commitment time, stopping time; bootstrap CIs |

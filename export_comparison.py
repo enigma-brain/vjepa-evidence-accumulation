@@ -111,8 +111,8 @@ def export_obs(obs, pattern, out, costs, m):
 
         for cost in costs:
             agents = {"FixedBudget": pomdp.FixedBudget(), "Threshold": pomdp.Threshold(),
-                      "Lookahead": pomdp.Lookahead(lp, alpha, m=m), "FittedQ": pomdp.FittedQ(),
-                      "LSM": pomdp.LSM()}
+                      "Lookahead": pomdp.Lookahead(lp, alpha, m=m), "FittedQ": pomdp.FittedQ()}
+            # pomdp.LSM is not in the comparison: it stops too early on both datasets (see README)
             for name, agent in agents.items():
                 agent.fit(B_fit, lq_fit, y[fi], cost)
                 r = pomdp.rollouts(agent, B_sc, y[sc], cost)
